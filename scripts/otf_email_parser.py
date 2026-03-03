@@ -163,9 +163,9 @@ def parse_eml_dir(eml_dir):
     return rows
 
 
-def fetch_imap_rows(user, password, folder="INBOX", since_days=60):
+def fetch_imap_rows(user, password, folder="INBOX", since_days=60, host=IMAP_HOST, port=IMAP_PORT):
     rows = []
-    conn = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+    conn = imaplib.IMAP4_SSL(host, port)
     conn.login(user, password)
     conn.select(folder)
 
@@ -249,6 +249,8 @@ def main():
     p.add_argument("--imap-user", default=os.getenv("OTF_IMAP_USER"))
     p.add_argument("--imap-password", default=os.getenv("OTF_IMAP_PASSWORD"))
     p.add_argument("--imap-folder", default=os.getenv("OTF_IMAP_FOLDER", "INBOX"))
+    p.add_argument("--imap-host", default=os.getenv("OTF_IMAP_HOST", IMAP_HOST))
+    p.add_argument("--imap-port", type=int, default=int(os.getenv("OTF_IMAP_PORT", str(IMAP_PORT))))
     p.add_argument("--since-days", type=int, default=60)
     p.add_argument("--csv", default="data/otf_classes.csv")
     p.add_argument("--report", default="data/otf_report.md")
@@ -261,7 +263,16 @@ def main():
     if args.imap:
         if not args.imap_user or not args.imap_password:
             raise SystemExit("For --imap, set --imap-user/--imap-password or OTF_IMAP_USER/OTF_IMAP_PASSWORD")
-        rows.extend(fetch_imap_rows(args.imap_user, args.imap_password, args.imap_folder, args.since_days))
+        rows.extend(
+            fetch_imap_rows(
+                args.imap_user,
+                args.imap_password,
+                args.imap_folder,
+                args.since_days,
+                args.imap_host,
+                args.imap_port,
+            )
+        )
 
     if not rows:
         raise SystemExit("No emails parsed. Use --eml-dir and/or --imap.")
