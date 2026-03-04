@@ -314,12 +314,13 @@ def graph_get_token(client_id: str, tenant: str = "common", cache_path: str = "d
     raise SystemExit("Device code flow timed out. Please retry.")
 
 
-def graph_list_folders(headers):
+def graph_list_folders(headers, include_hidden=False):
     def list_children(parent_id=None):
         base = f"{GRAPH_API_ROOT}/me/mailFolders"
         if parent_id:
             base = f"{GRAPH_API_ROOT}/me/mailFolders/{parent_id}/childFolders"
-        url = f"{base}?$top=200&$select=id,displayName"
+        hidden = "true" if include_hidden else "false"
+        url = f"{base}?$top=200&$select=id,displayName&includeHiddenFolders={hidden}"
         out = []
         while url:
             r = requests.get(url, headers=headers, timeout=30)
@@ -344,12 +345,19 @@ def graph_list_folders(headers):
     return folders
 
 
-def graph_find_folder_id(headers, folder_name: str):
+def graph_get_me(headers):
+    r = requests.get(f"{GRAPH_API_ROOT}/me?$select=id,displayName,mail,userPrincipalName", headers=headers, timeout=30)
+    if not r.ok:
+        raise SystemExit(f"Graph /me error: {r.status_code} {r.text}")
+    return r.json()
+
+
+def graph_find_folder_id(headers, folder_name: str, include_hidden=False):
     target = (folder_name or "").strip().lower()
     if not target:
         return None
 
-    folders = graph_list_folders(headers)
+    folders = graph_list_folders(headers, include_hidden=include_hidden)
     # exact path first
     for f in folders:
         if (f["path"] or "").strip().lower() == target:
@@ -374,6 +382,7 @@ def fetch_graph_rows(
     token_cache="data/graph_token.json",
     folder_name="",
     list_folders=False,
+    include_hidden_folders=False,
 ):
     if requests is None:
         raise SystemExit("Missing dependency: requests. Install with `python3 -m pip install requests`.")
@@ -385,18 +394,22 @@ def fetch_graph_rows(
     headers = {"Authorization": f"Bearer {token}"}
 
     endpoint = f"{GRAPH_API_ROOT}/me/messages"
-    all_folders = graph_list_folders(headers)
+    me = graph_get_me(headers)
+    all_folders = graph_list_folders(headers, include_hidden=include_hidden_folders)
     if list_folders:
+        who = me.get("mail") or me.get("userPrincipalName") or me.get("displayName") or me.get("id")
+        print(f"Graph account: {who}")
         print("Graph folders:")
         for f in all_folders:
             print(f"- {f['path']}")
         return rows
 
     if folder_name:
-        folder_id = graph_find_folder_id(headers, folder_name)
+        folder_id = graph_find_folder_id(headers, folder_name, include_hidden=include_hidden_folders)
         if not folder_id:
             preview = "\n".join([f"- {f['path']}" for f in all_folders[:50]])
-            raise SystemExit(f"Graph folder not found: {folder_name}\nAvailable folders (first 50):\n{preview}")
+            who = me.get("mail") or me.get("userPrincipalName") or me.get("displayName") or me.get("id")
+            raise SystemExit(f"Graph folder not found: {folder_name}\nGraph account: {who}\nAvailable folders (first 50):\n{preview}")
         endpoint = f"{GRAPH_API_ROOT}/me/mailFolders/{folder_id}/messages"
 
     url = (
@@ -514,6 +527,7 @@ def main():
     p.add_argument("--graph-sender-contains", default=os.getenv("OTF_GRAPH_SENDER", "orangetheory"))
     p.add_argument("--graph-folder", default=os.getenv("OTF_GRAPH_FOLDER", ""), help="Mail folder name or path, e.g. 'OrangeTheory' or 'Inbox/OrangeTheory' (optional)")
     p.add_argument("--graph-list-folders", action="store_true", help="List Graph mail folders and exit")
+    p.add_argument("--graph-include-hidden-folders", action="store_true", help="Include hidden folders when listing/finding")
 
     p.add_argument("--since-days", type=int, default=60)
     p.add_argument("--csv", default="data/otf_classes.csv")
@@ -550,6 +564,7 @@ def main():
                 token_cache=args.graph_token_cache,
                 folder_name=args.graph_folder,
                 list_folders=args.graph_list_folders,
+                include_hidden_folders=args.graph_include_hidden_folders,
             )
         )
 
