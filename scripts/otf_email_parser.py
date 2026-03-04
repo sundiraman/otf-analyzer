@@ -315,17 +315,52 @@ def graph_get_token(client_id: str, tenant: str = "common", cache_path: str = "d
 
 
 def graph_find_folder_id(headers, folder_name: str):
-    url = f"{GRAPH_API_ROOT}/me/mailFolders?$top=200&$select=id,displayName"
     target = (folder_name or "").strip().lower()
-    while url:
-        r = requests.get(url, headers=headers, timeout=30)
-        if not r.ok:
-            raise SystemExit(f"Graph folder list error: {r.status_code} {r.text}")
-        data = r.json()
-        for f in data.get("value", []):
-            if (f.get("displayName") or "").strip().lower() == target:
-                return f.get("id")
-        url = data.get("@odata.nextLink")
+    if not target:
+        return None
+
+    # Supports either leaf name ("OrangeTheory") or path ("Inbox/OrangeTheory").
+    target_parts = [p.strip().lower() for p in target.split("/") if p.strip()]
+
+    def list_children(parent_id=None):
+        base = f"{GRAPH_API_ROOT}/me/mailFolders"
+        if parent_id:
+            base = f"{GRAPH_API_ROOT}/me/mailFolders/{parent_id}/childFolders"
+        url = f"{base}?$top=200&$select=id,displayName"
+        out = []
+        while url:
+            r = requests.get(url, headers=headers, timeout=30)
+            if not r.ok:
+                raise SystemExit(f"Graph folder list error: {r.status_code} {r.text}")
+            data = r.json()
+            out.extend(data.get("value", []))
+            url = data.get("@odata.nextLink")
+        return out
+
+    # Path traversal (Inbox/Subfolder form)
+    if len(target_parts) > 1:
+        current_parent = None
+        for part in target_parts:
+            kids = list_children(current_parent)
+            match = next((k for k in kids if (k.get("displayName") or "").strip().lower() == part), None)
+            if not match:
+                return None
+            current_parent = match.get("id")
+        return current_parent
+
+    # Leaf-name search (breadth-first through all descendants)
+    queue = [None]
+    while queue:
+        parent_id = queue.pop(0)
+        kids = list_children(parent_id)
+        for f in kids:
+            name = (f.get("displayName") or "").strip().lower()
+            fid = f.get("id")
+            if name == target:
+                return fid
+            if fid:
+                queue.append(fid)
+
     return None
 
 
@@ -466,7 +501,7 @@ def main():
     p.add_argument("--graph-tenant", default=os.getenv("OTF_GRAPH_TENANT", "common"), help="Tenant id or 'common'")
     p.add_argument("--graph-token-cache", default=os.getenv("OTF_GRAPH_TOKEN_CACHE", "data/graph_token.json"))
     p.add_argument("--graph-sender-contains", default=os.getenv("OTF_GRAPH_SENDER", "orangetheory"))
-    p.add_argument("--graph-folder", default=os.getenv("OTF_GRAPH_FOLDER", ""), help="Mail folder display name (optional)")
+    p.add_argument("--graph-folder", default=os.getenv("OTF_GRAPH_FOLDER", ""), help="Mail folder name or path, e.g. 'OrangeTheory' or 'Inbox/OrangeTheory' (optional)")
 
     p.add_argument("--since-days", type=int, default=60)
     p.add_argument("--csv", default="data/otf_classes.csv")
