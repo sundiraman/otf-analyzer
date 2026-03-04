@@ -3,16 +3,26 @@ import argparse
 import csv
 import email
 import hashlib
+import html
 import imaplib
+import json
 import os
 import re
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email import policy
 from email.parser import BytesParser
 
+try:
+    import requests
+except Exception:  # optional until --graph is used
+    requests = None
+
 IMAP_HOST = "outlook.office365.com"
 IMAP_PORT = 993
+GRAPH_AUTHORITY = "https://login.microsoftonline.com/common"
+GRAPH_SCOPE = ["Mail.Read", "User.Read", "offline_access"]
+GRAPH_API_ROOT = "https://graph.microsoft.com/v1.0"
 
 FIELDNAMES = [
     "id",
@@ -35,6 +45,15 @@ FIELDNAMES = [
 
 def clean_text(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
+
+
+def strip_html(s: str) -> str:
+    s = s or ""
+    s = re.sub(r"<\s*br\s*/?>", "\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"</p\s*>", "\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"<[^>]+>", " ", s)
+    s = html.unescape(s)
+    return clean_text(s)
 
 
 def parse_email_body(msg) -> str:
@@ -140,6 +159,7 @@ def load_existing_ids(csv_path):
 
 def append_rows(csv_path, rows):
     exists = os.path.exists(csv_path)
+    os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
     with open(csv_path, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
         if not exists:
@@ -170,13 +190,9 @@ def fetch_imap_rows(
     since_days=60,
     host=IMAP_HOST,
     port=IMAP_PORT,
-    debug=False,
 ):
     rows = []
     conn = imaplib.IMAP4_SSL(host, port)
-    if debug:
-        conn.debug = 4
-        print(f"[imap-debug] connecting to {host}:{port} as {user}")
     conn.login(user, password)
     conn.select(folder)
 
@@ -197,6 +213,135 @@ def fetch_imap_rows(
         rows.append(parse_metrics(subj, body, source=f"imap:{folder}:{num.decode()}", date_hdr=msg.get("date", "")))
 
     conn.logout()
+    return rows
+
+
+def graph_get_token(client_id: str, tenant: str = "common", cache_path: str = "data/graph_token.json"):
+    if requests is None:
+        raise SystemExit("Missing dependency: requests. Install with `python3 -m pip install requests`.")
+
+    cache = {}
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+        except Exception:
+            cache = {}
+
+    now = datetime.now(timezone.utc).timestamp()
+    if cache.get("access_token") and cache.get("expires_at", 0) > now + 60:
+        return cache["access_token"]
+
+    authority = f"https://login.microsoftonline.com/{tenant}"
+    token_url = f"{authority}/oauth2/v2.0/token"
+    scope = " ".join(GRAPH_SCOPE)
+
+    if cache.get("refresh_token"):
+        r = requests.post(token_url, data={
+            "client_id": client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": cache["refresh_token"],
+            "scope": scope,
+        }, timeout=30)
+        if r.ok:
+            tok = r.json()
+            cache = {
+                "access_token": tok["access_token"],
+                "refresh_token": tok.get("refresh_token", cache.get("refresh_token")),
+                "expires_at": now + int(tok.get("expires_in", 3600)),
+            }
+            os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(cache, f)
+            return cache["access_token"]
+
+    device_code_url = f"{authority}/oauth2/v2.0/devicecode"
+    dc = requests.post(device_code_url, data={"client_id": client_id, "scope": scope}, timeout=30)
+    if not dc.ok:
+        raise SystemExit(f"Device code init failed: {dc.status_code} {dc.text}")
+
+    payload = dc.json()
+    print(payload.get("message", "Open the verification URL and enter the code to sign in."))
+    interval = int(payload.get("interval", 5))
+
+    import time
+    deadline = time.time() + int(payload.get("expires_in", 900))
+    while time.time() < deadline:
+        tr = requests.post(token_url, data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "client_id": client_id,
+            "device_code": payload["device_code"],
+        }, timeout=30)
+        if tr.ok:
+            tok = tr.json()
+            cache = {
+                "access_token": tok["access_token"],
+                "refresh_token": tok.get("refresh_token"),
+                "expires_at": datetime.now(timezone.utc).timestamp() + int(tok.get("expires_in", 3600)),
+            }
+            os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(cache, f)
+            return cache["access_token"]
+
+        err = tr.json().get("error", "") if tr.headers.get("content-type", "").startswith("application/json") else ""
+        if err in {"authorization_pending", "slow_down"}:
+            time.sleep(interval + (2 if err == "slow_down" else 0))
+            continue
+        raise SystemExit(f"Token error: {tr.status_code} {tr.text}")
+
+    raise SystemExit("Device code flow timed out. Please retry.")
+
+
+def fetch_graph_rows(client_id, tenant="common", since_days=60, sender_contains="orangetheory", token_cache="data/graph_token.json"):
+    if requests is None:
+        raise SystemExit("Missing dependency: requests. Install with `python3 -m pip install requests`.")
+
+    token = graph_get_token(client_id, tenant=tenant, cache_path=token_cache)
+    since_dt = datetime.now(timezone.utc) - timedelta(days=since_days)
+
+    rows = []
+    url = (
+        f"{GRAPH_API_ROOT}/me/messages"
+        "?$select=id,subject,from,receivedDateTime,body"
+        "&$orderby=receivedDateTime desc"
+        "&$top=50"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    while url:
+        r = requests.get(url, headers=headers, timeout=30)
+        if not r.ok:
+            raise SystemExit(f"Graph messages error: {r.status_code} {r.text}")
+        data = r.json()
+        for m in data.get("value", []):
+            from_addr = (m.get("from") or {}).get("emailAddress", {}).get("address", "")
+            subj = m.get("subject", "") or ""
+            dt_raw = m.get("receivedDateTime", "")
+            try:
+                dt = datetime.fromisoformat(dt_raw.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            if dt < since_dt:
+                return rows
+            hay = f"{from_addr} {subj}".lower()
+            if sender_contains.lower() not in hay:
+                continue
+
+            body_obj = m.get("body") or {}
+            content = body_obj.get("content", "")
+            if (body_obj.get("contentType") or "").lower() == "html":
+                content = strip_html(content)
+
+            rows.append(parse_metrics(
+                subj,
+                content,
+                source=f"graph:{m.get('id', '')}",
+                date_hdr=dt_raw,
+            ))
+
+        url = data.get("@odata.nextLink")
+
     return rows
 
 
@@ -249,6 +394,7 @@ def summarize(csv_path, report_path):
             f"- **{klass}** ({len(group)} classes): avg distance {((sum(d)/len(d)) if d else 0):.2f} mi, avg HR {((sum(h)/len(h)) if h else 0):.0f} bpm, efficiency {eff}"
         )
 
+    os.makedirs(os.path.dirname(report_path) or ".", exist_ok=True)
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -262,7 +408,13 @@ def main():
     p.add_argument("--imap-folder", default=os.getenv("OTF_IMAP_FOLDER", "INBOX"))
     p.add_argument("--imap-host", default=os.getenv("OTF_IMAP_HOST", IMAP_HOST))
     p.add_argument("--imap-port", type=int, default=int(os.getenv("OTF_IMAP_PORT", str(IMAP_PORT))))
-    p.add_argument("--imap-debug", action="store_true", help="Enable IMAP protocol debug logs")
+
+    p.add_argument("--graph", action="store_true", help="Fetch using Microsoft Graph OAuth device-code flow")
+    p.add_argument("--graph-client-id", default=os.getenv("OTF_GRAPH_CLIENT_ID"), help="Azure app client id")
+    p.add_argument("--graph-tenant", default=os.getenv("OTF_GRAPH_TENANT", "common"), help="Tenant id or 'common'")
+    p.add_argument("--graph-token-cache", default=os.getenv("OTF_GRAPH_TOKEN_CACHE", "data/graph_token.json"))
+    p.add_argument("--graph-sender-contains", default=os.getenv("OTF_GRAPH_SENDER", "orangetheory"))
+
     p.add_argument("--since-days", type=int, default=60)
     p.add_argument("--csv", default="data/otf_classes.csv")
     p.add_argument("--report", default="data/otf_report.md")
@@ -283,12 +435,24 @@ def main():
                 args.since_days,
                 args.imap_host,
                 args.imap_port,
-                args.imap_debug,
+            )
+        )
+
+    if args.graph:
+        if not args.graph_client_id:
+            raise SystemExit("For --graph, set --graph-client-id or OTF_GRAPH_CLIENT_ID")
+        rows.extend(
+            fetch_graph_rows(
+                client_id=args.graph_client_id,
+                tenant=args.graph_tenant,
+                since_days=args.since_days,
+                sender_contains=args.graph_sender_contains,
+                token_cache=args.graph_token_cache,
             )
         )
 
     if not rows:
-        raise SystemExit("No emails parsed. Use --eml-dir and/or --imap.")
+        raise SystemExit("No emails parsed. Use --eml-dir and/or --imap and/or --graph.")
 
     existing = load_existing_ids(args.csv)
     new_rows = [r for r in rows if r["id"] not in existing]
