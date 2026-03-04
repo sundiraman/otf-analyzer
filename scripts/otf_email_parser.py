@@ -24,6 +24,27 @@ GRAPH_AUTHORITY = "https://login.microsoftonline.com/common"
 GRAPH_SCOPE = ["Mail.Read", "User.Read", "offline_access"]
 GRAPH_API_ROOT = "https://graph.microsoft.com/v1.0"
 
+
+def load_dotenv(path: str = ".env"):
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):].strip()
+                if "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip().strip('"').strip("'")
+                os.environ.setdefault(k, v)
+    except Exception:
+        pass
+
 FIELDNAMES = [
     "id",
     "date",
@@ -400,6 +421,7 @@ def summarize(csv_path, report_path):
 
 
 def main():
+    load_dotenv()
     p = argparse.ArgumentParser(description="Parse OrangeTheory emails into CSV and summary report.")
     p.add_argument("--eml-dir", help="Directory containing .eml files")
     p.add_argument("--imap", action="store_true", help="Fetch from Outlook IMAP")
