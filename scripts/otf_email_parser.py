@@ -179,7 +179,10 @@ def parse_metrics(subject: str, body: str, source: str, date_hdr: str = ""):
         try:
             dt = email.utils.parsedate_to_datetime(date_hdr).isoformat()
         except Exception:
-            dt = ""
+            try:
+                dt = datetime.fromisoformat(str(date_hdr).replace("Z", "+00:00")).isoformat()
+            except Exception:
+                dt = ""
 
     digest_src = f"{subject}|{date_hdr}|{source}|{distance}|{avg_hr}|{max_hr}|{splat}"
     row_id = hashlib.sha1(digest_src.encode()).hexdigest()[:12]
@@ -476,8 +479,8 @@ def fetch_graph_rows(
 
             body_obj = m.get("body") or {}
             content = body_obj.get("content", "")
-            if (body_obj.get("contentType") or "").lower() == "html":
-                content = strip_html(content)
+            # Keep raw HTML when provided; parse_metrics handles HTML-aware extraction
+            # (zone bars + modern OTF templates rely on structure/classes).
 
             rows.append(parse_metrics(
                 subj,
