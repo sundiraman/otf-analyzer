@@ -163,9 +163,20 @@ def parse_eml_dir(eml_dir):
     return rows
 
 
-def fetch_imap_rows(user, password, folder="INBOX", since_days=60, host=IMAP_HOST, port=IMAP_PORT):
+def fetch_imap_rows(
+    user,
+    password,
+    folder="INBOX",
+    since_days=60,
+    host=IMAP_HOST,
+    port=IMAP_PORT,
+    debug=False,
+):
     rows = []
     conn = imaplib.IMAP4_SSL(host, port)
+    if debug:
+        conn.debug = 4
+        print(f"[imap-debug] connecting to {host}:{port} as {user}")
     conn.login(user, password)
     conn.select(folder)
 
@@ -251,6 +262,7 @@ def main():
     p.add_argument("--imap-folder", default=os.getenv("OTF_IMAP_FOLDER", "INBOX"))
     p.add_argument("--imap-host", default=os.getenv("OTF_IMAP_HOST", IMAP_HOST))
     p.add_argument("--imap-port", type=int, default=int(os.getenv("OTF_IMAP_PORT", str(IMAP_PORT))))
+    p.add_argument("--imap-debug", action="store_true", help="Enable IMAP protocol debug logs")
     p.add_argument("--since-days", type=int, default=60)
     p.add_argument("--csv", default="data/otf_classes.csv")
     p.add_argument("--report", default="data/otf_report.md")
@@ -271,6 +283,7 @@ def main():
                 args.since_days,
                 args.imap_host,
                 args.imap_port,
+                args.imap_debug,
             )
         )
 
