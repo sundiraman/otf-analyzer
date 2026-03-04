@@ -314,14 +314,7 @@ def graph_get_token(client_id: str, tenant: str = "common", cache_path: str = "d
     raise SystemExit("Device code flow timed out. Please retry.")
 
 
-def graph_find_folder_id(headers, folder_name: str):
-    target = (folder_name or "").strip().lower()
-    if not target:
-        return None
-
-    # Supports either leaf name ("OrangeTheory") or path ("Inbox/OrangeTheory").
-    target_parts = [p.strip().lower() for p in target.split("/") if p.strip()]
-
+def graph_list_folders(headers):
     def list_children(parent_id=None):
         base = f"{GRAPH_API_ROOT}/me/mailFolders"
         if parent_id:
@@ -337,29 +330,38 @@ def graph_find_folder_id(headers, folder_name: str):
             url = data.get("@odata.nextLink")
         return out
 
-    # Path traversal (Inbox/Subfolder form)
-    if len(target_parts) > 1:
-        current_parent = None
-        for part in target_parts:
-            kids = list_children(current_parent)
-            match = next((k for k in kids if (k.get("displayName") or "").strip().lower() == part), None)
-            if not match:
-                return None
-            current_parent = match.get("id")
-        return current_parent
-
-    # Leaf-name search (breadth-first through all descendants)
-    queue = [None]
+    folders = []
+    queue = [(None, "")]
     while queue:
-        parent_id = queue.pop(0)
-        kids = list_children(parent_id)
-        for f in kids:
-            name = (f.get("displayName") or "").strip().lower()
+        parent_id, parent_path = queue.pop(0)
+        for f in list_children(parent_id):
+            name = (f.get("displayName") or "").strip()
             fid = f.get("id")
-            if name == target:
-                return fid
+            path = f"{parent_path}/{name}" if parent_path else name
+            folders.append({"id": fid, "name": name, "path": path})
             if fid:
-                queue.append(fid)
+                queue.append((fid, path))
+    return folders
+
+
+def graph_find_folder_id(headers, folder_name: str):
+    target = (folder_name or "").strip().lower()
+    if not target:
+        return None
+
+    folders = graph_list_folders(headers)
+    # exact path first
+    for f in folders:
+        if (f["path"] or "").strip().lower() == target:
+            return f["id"]
+    # exact leaf name next
+    for f in folders:
+        if (f["name"] or "").strip().lower() == target:
+            return f["id"]
+    # contains path fallback
+    for f in folders:
+        if target in (f["path"] or "").strip().lower():
+            return f["id"]
 
     return None
 
@@ -371,6 +373,7 @@ def fetch_graph_rows(
     sender_contains="orangetheory",
     token_cache="data/graph_token.json",
     folder_name="",
+    list_folders=False,
 ):
     if requests is None:
         raise SystemExit("Missing dependency: requests. Install with `python3 -m pip install requests`.")
@@ -382,10 +385,18 @@ def fetch_graph_rows(
     headers = {"Authorization": f"Bearer {token}"}
 
     endpoint = f"{GRAPH_API_ROOT}/me/messages"
+    all_folders = graph_list_folders(headers)
+    if list_folders:
+        print("Graph folders:")
+        for f in all_folders:
+            print(f"- {f['path']}")
+        return rows
+
     if folder_name:
         folder_id = graph_find_folder_id(headers, folder_name)
         if not folder_id:
-            raise SystemExit(f"Graph folder not found: {folder_name}")
+            preview = "\n".join([f"- {f['path']}" for f in all_folders[:50]])
+            raise SystemExit(f"Graph folder not found: {folder_name}\nAvailable folders (first 50):\n{preview}")
         endpoint = f"{GRAPH_API_ROOT}/me/mailFolders/{folder_id}/messages"
 
     url = (
@@ -502,6 +513,7 @@ def main():
     p.add_argument("--graph-token-cache", default=os.getenv("OTF_GRAPH_TOKEN_CACHE", "data/graph_token.json"))
     p.add_argument("--graph-sender-contains", default=os.getenv("OTF_GRAPH_SENDER", "orangetheory"))
     p.add_argument("--graph-folder", default=os.getenv("OTF_GRAPH_FOLDER", ""), help="Mail folder name or path, e.g. 'OrangeTheory' or 'Inbox/OrangeTheory' (optional)")
+    p.add_argument("--graph-list-folders", action="store_true", help="List Graph mail folders and exit")
 
     p.add_argument("--since-days", type=int, default=60)
     p.add_argument("--csv", default="data/otf_classes.csv")
@@ -537,8 +549,12 @@ def main():
                 sender_contains=args.graph_sender_contains,
                 token_cache=args.graph_token_cache,
                 folder_name=args.graph_folder,
+                list_folders=args.graph_list_folders,
             )
         )
+
+    if args.graph and args.graph_list_folders:
+        return
 
     if not rows:
         raise SystemExit("No emails parsed. Use --eml-dir and/or --imap and/or --graph.")
