@@ -314,7 +314,29 @@ def graph_get_token(client_id: str, tenant: str = "common", cache_path: str = "d
     raise SystemExit("Device code flow timed out. Please retry.")
 
 
-def fetch_graph_rows(client_id, tenant="common", since_days=60, sender_contains="orangetheory", token_cache="data/graph_token.json"):
+def graph_find_folder_id(headers, folder_name: str):
+    url = f"{GRAPH_API_ROOT}/me/mailFolders?$top=200&$select=id,displayName"
+    target = (folder_name or "").strip().lower()
+    while url:
+        r = requests.get(url, headers=headers, timeout=30)
+        if not r.ok:
+            raise SystemExit(f"Graph folder list error: {r.status_code} {r.text}")
+        data = r.json()
+        for f in data.get("value", []):
+            if (f.get("displayName") or "").strip().lower() == target:
+                return f.get("id")
+        url = data.get("@odata.nextLink")
+    return None
+
+
+def fetch_graph_rows(
+    client_id,
+    tenant="common",
+    since_days=60,
+    sender_contains="orangetheory",
+    token_cache="data/graph_token.json",
+    folder_name="",
+):
     if requests is None:
         raise SystemExit("Missing dependency: requests. Install with `python3 -m pip install requests`.")
 
@@ -322,13 +344,21 @@ def fetch_graph_rows(client_id, tenant="common", since_days=60, sender_contains=
     since_dt = datetime.now(timezone.utc) - timedelta(days=since_days)
 
     rows = []
+    headers = {"Authorization": f"Bearer {token}"}
+
+    endpoint = f"{GRAPH_API_ROOT}/me/messages"
+    if folder_name:
+        folder_id = graph_find_folder_id(headers, folder_name)
+        if not folder_id:
+            raise SystemExit(f"Graph folder not found: {folder_name}")
+        endpoint = f"{GRAPH_API_ROOT}/me/mailFolders/{folder_id}/messages"
+
     url = (
-        f"{GRAPH_API_ROOT}/me/messages"
+        f"{endpoint}"
         "?$select=id,subject,from,receivedDateTime,body"
         "&$orderby=receivedDateTime desc"
         "&$top=50"
     )
-    headers = {"Authorization": f"Bearer {token}"}
 
     while url:
         r = requests.get(url, headers=headers, timeout=30)
@@ -436,6 +466,7 @@ def main():
     p.add_argument("--graph-tenant", default=os.getenv("OTF_GRAPH_TENANT", "common"), help="Tenant id or 'common'")
     p.add_argument("--graph-token-cache", default=os.getenv("OTF_GRAPH_TOKEN_CACHE", "data/graph_token.json"))
     p.add_argument("--graph-sender-contains", default=os.getenv("OTF_GRAPH_SENDER", "orangetheory"))
+    p.add_argument("--graph-folder", default=os.getenv("OTF_GRAPH_FOLDER", ""), help="Mail folder display name (optional)")
 
     p.add_argument("--since-days", type=int, default=60)
     p.add_argument("--csv", default="data/otf_classes.csv")
@@ -470,6 +501,7 @@ def main():
                 since_days=args.since_days,
                 sender_contains=args.graph_sender_contains,
                 token_cache=args.graph_token_cache,
+                folder_name=args.graph_folder,
             )
         )
 
