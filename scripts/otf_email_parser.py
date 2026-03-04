@@ -122,21 +122,57 @@ def infer_class_type(subject: str, body: str) -> str:
 
 
 def parse_metrics(subject: str, body: str, source: str, date_hdr: str = ""):
-    text = clean_text(body)
+    raw_text = body or ""
+    text = strip_html(raw_text) if "<" in raw_text and ">" in raw_text else clean_text(raw_text)
+
     distance = first_match([
-        r"distance\s*(?:run|ran)?\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:mi|miles)",
-        r"([0-9]+(?:\.[0-9]+)?)\s*(?:mi|miles)\s*(?:distance|run|ran)",
+        r"distance\s*(?:run|ran|total)?\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:mi|miles)",
+        r"([0-9]+(?:\.[0-9]+)?)\s*(?:mi|miles)\s*(?:distance|run|ran|total)",
     ], text)
-    avg_hr = first_match([r"avg(?:\.|erage)?\s*hr\s*[:\-]?\s*([0-9]{2,3})", r"average heart rate\s*[:\-]?\s*([0-9]{2,3})"], text, int)
-    max_hr = first_match([r"max\s*hr\s*[:\-]?\s*([0-9]{2,3})", r"maximum heart rate\s*[:\-]?\s*([0-9]{2,3})"], text, int)
-    splat = first_match([r"splat\s*points?\s*[:\-]?\s*([0-9]{1,3})"], text, int)
-    calories = first_match([r"calories\s*(?:burned)?\s*[:\-]?\s*([0-9]{2,4})"], text, int)
+
+    avg_hr = first_match([
+        r"avg(?:\.|erage)?\s*[- ]?heart[- ]?rate\s*[:\-]?\s*([0-9]{2,3})",
+        r"avg(?:\.|erage)?\s*hr\s*[:\-]?\s*([0-9]{2,3})",
+        r"([0-9]{2,3})\s+AVG\.?\s*HEART[- ]?RATE",
+    ], text, int)
+
+    max_hr = first_match([
+        r"max(?:imum)?\s*hr\s*[:\-]?\s*([0-9]{2,3})",
+        r"maximum\s*heart\s*rate\s*[:\-]?\s*([0-9]{2,3})",
+        r"peak\s*hr[^0-9]{0,30}([0-9]{2,3})",
+    ], text, int)
+
+    this_class = re.search(r"THIS\s+CLASS\s+([0-9,]+)\s+([0-9,]+)\s+([0-9,]+)", text, re.IGNORECASE)
+
+    splat = ""
+    calories = ""
+    if this_class:
+        calories = int(this_class.group(1).replace(",", ""))
+        splat = int(this_class.group(2).replace(",", ""))
+
+    if splat == "":
+        splat = first_match([
+            r"([0-9]{1,3})\s+SPLAT\s*POINTS",
+            r"splat\s*points?\s*[:\-]\s*([0-9]{1,3})",
+        ], text, int)
+
+    if calories == "":
+        calories = first_match([
+            r"([0-9]{2,4})\s+CALORIES\s*BURNED",
+            r"calories\s*(?:burned)?\s*[:\-]\s*([0-9]{2,4})",
+        ], text, int)
 
     zone_gray = first_match([r"gray\s*[:\-]?\s*([0-9]{1,3})\s*(?:min|minutes?)"], text, int)
     zone_blue = first_match([r"blue\s*[:\-]?\s*([0-9]{1,3})\s*(?:min|minutes?)"], text, int)
     zone_green = first_match([r"green\s*[:\-]?\s*([0-9]{1,3})\s*(?:min|minutes?)"], text, int)
     zone_orange = first_match([r"orange\s*[:\-]?\s*([0-9]{1,3})\s*(?:min|minutes?)"], text, int)
     zone_red = first_match([r"red\s*[:\-]?\s*([0-9]{1,3})\s*(?:min|minutes?)"], text, int)
+
+    # OTF v3 HTML: zone minutes appear as five bar labels in order Gray, Blue, Green, Orange, Red.
+    if "" in [zone_gray, zone_blue, zone_green, zone_orange, zone_red]:
+        zone_vals = re.findall(r"bar-bumber[^>]*>\s*([0-9]{1,3})\s*<", raw_text, re.IGNORECASE)
+        if len(zone_vals) >= 5:
+            zone_gray, zone_blue, zone_green, zone_orange, zone_red = [int(v) for v in zone_vals[:5]]
 
     dt = ""
     if date_hdr:
