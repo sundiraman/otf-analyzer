@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+
+# OAuth tokens / secrets
+scripts/data/graph_token.json
+.env
+scripts/.env

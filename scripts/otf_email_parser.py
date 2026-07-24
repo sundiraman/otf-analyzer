@@ -548,6 +548,133 @@ def summarize(csv_path, report_path):
         f.write("\n".join(lines) + "\n")
 
 
+def summarize_html(csv_path, html_path):
+    if not os.path.exists(csv_path):
+        return
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+
+    if not rows:
+        return
+
+    def esc(v):
+        return html.escape(str(v) if v is not None else "")
+
+    def td_num(v, fmt):
+        return f"<td>{format(v, fmt)}</td>" if v is not None else "<td>n/a</td>"
+
+    total = len(rows)
+    dist_vals = [x for x in (to_float(r["distance_miles"]) for r in rows) if x is not None]
+    hr_vals = [x for x in (to_float(r["avg_hr"]) for r in rows) if x is not None]
+    avg_dist = (sum(dist_vals) / len(dist_vals)) if dist_vals else None
+    avg_hr = (sum(hr_vals) / len(hr_vals)) if hr_vals else None
+
+    by_class = defaultdict(list)
+    for r in rows:
+        by_class[r.get("class_type") or "Unknown"].append(r)
+
+    class_rows_html = []
+    for klass, group in sorted(by_class.items(), key=lambda kv: len(kv[1]), reverse=True):
+        d = [x for x in (to_float(g["distance_miles"]) for g in group) if x is not None]
+        h = [x for x in (to_float(g["avg_hr"]) for g in group) if x is not None]
+        g_avg_dist = (sum(d) / len(d)) if d else None
+        g_avg_hr = (sum(h) / len(h)) if h else None
+        eff = f"{(g_avg_dist / g_avg_hr):.5f} mi/bpm" if g_avg_dist and g_avg_hr else "n/a"
+        class_rows_html.append(
+            "<tr>"
+            f"<td>{esc(klass)}</td>"
+            f"<td>{len(group)}</td>"
+            + td_num(g_avg_dist, ".2f")
+            + td_num(g_avg_hr, ".0f")
+            + f"<td>{esc(eff)}</td>"
+            "</tr>"
+        )
+
+    def sort_key(r):
+        return r.get("date") or ""
+
+    sessions_sorted = sorted(rows, key=sort_key, reverse=True)
+    session_rows_html = []
+    for r in sessions_sorted:
+        dist = to_float(r.get("distance_miles"))
+        hr = to_float(r.get("avg_hr"))
+        max_hr = to_float(r.get("max_hr"))
+        splat = r.get("splat_points") or ""
+        cal = r.get("calories") or ""
+        session_rows_html.append(
+            "<tr>"
+            f"<td>{esc(r.get('date'))}</td>"
+            f"<td>{esc(r.get('class_type') or 'Unknown')}</td>"
+            + td_num(dist, ".2f")
+            + td_num(hr, ".0f")
+            + td_num(max_hr, ".0f")
+            + f"<td>{esc(splat)}</td>"
+            f"<td>{esc(cal)}</td>"
+            "</tr>"
+        )
+
+    avg_dist_html = f"{avg_dist:.2f} mi" if avg_dist is not None else "n/a"
+    avg_hr_html = f"{avg_hr:.0f} bpm" if avg_hr is not None else "n/a"
+
+    html_doc = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OrangeTheory Report</title>
+<style>
+  body {{ font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 2rem; background: #f7f7f9; color: #222; }}
+  h1 {{ margin-bottom: 0.25rem; }}
+  .subtitle {{ color: #666; margin-top: 0; }}
+  .stats {{ display: flex; gap: 1rem; margin: 1.5rem 0; flex-wrap: wrap; }}
+  .card {{ background: #fff; border-radius: 8px; padding: 1rem 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); min-width: 140px; }}
+  .card .value {{ font-size: 1.6rem; font-weight: 700; color: #d64000; }}
+  .card .label {{ font-size: 0.85rem; color: #666; }}
+  table {{ border-collapse: collapse; width: 100%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 2rem; }}
+  th, td {{ padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #eee; }}
+  th {{ background: #333; color: #fff; position: sticky; top: 0; }}
+  tr:hover {{ background: #fffaf5; }}
+  h2 {{ margin-top: 2rem; }}
+  .table-wrap {{ max-height: 600px; overflow-y: auto; }}
+</style>
+</head>
+<body>
+  <h1>OrangeTheory Report</h1>
+  <p class="subtitle">Generated {esc(datetime.now().strftime("%Y-%m-%d %H:%M"))}</p>
+
+  <div class="stats">
+    <div class="card"><div class="value">{total}</div><div class="label">Classes parsed</div></div>
+    <div class="card"><div class="value">{esc(avg_dist_html)}</div><div class="label">Avg distance</div></div>
+    <div class="card"><div class="value">{esc(avg_hr_html)}</div><div class="label">Avg heart rate</div></div>
+  </div>
+
+  <h2>By class type</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Class type</th><th>Count</th><th>Avg distance (mi)</th><th>Avg HR (bpm)</th><th>Efficiency</th></tr></thead>
+    <tbody>
+      {''.join(class_rows_html)}
+    </tbody>
+  </table>
+  </div>
+
+  <h2>All sessions</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Date</th><th>Class type</th><th>Distance (mi)</th><th>Avg HR</th><th>Max HR</th><th>Splat pts</th><th>Calories</th></tr></thead>
+    <tbody>
+      {''.join(session_rows_html)}
+    </tbody>
+  </table>
+  </div>
+</body>
+</html>
+"""
+
+    os.makedirs(os.path.dirname(html_path) or ".", exist_ok=True)
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html_doc)
+
+
 def main():
     load_dotenv()
     p = argparse.ArgumentParser(description="Parse OrangeTheory emails into CSV and summary report.")
@@ -571,6 +698,7 @@ def main():
     p.add_argument("--since-days", type=int, default=60)
     p.add_argument("--csv", default="data/otf_classes.csv")
     p.add_argument("--report", default="data/otf_report.md")
+    p.add_argument("--html-report", default=os.getenv("OTF_HTML_REPORT", "data/otf_report.html"))
     args = p.parse_args()
 
     rows = []
@@ -619,7 +747,8 @@ def main():
         append_rows(args.csv, new_rows)
 
     summarize(args.csv, args.report)
-    print(f"Parsed: {len(rows)} | New rows: {len(new_rows)} | CSV: {args.csv} | Report: {args.report}")
+    summarize_html(args.csv, args.html_report)
+    print(f"Parsed: {len(rows)} | New rows: {len(new_rows)} | CSV: {args.csv} | Report: {args.report} | HTML: {args.html_report}")
 
 
 if __name__ == "__main__":
