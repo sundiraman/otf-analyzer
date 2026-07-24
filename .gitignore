@@ -5,3 +5,8 @@ __pycache__/
 scripts/data/graph_token.json
 .env
 scripts/.env
+
+# Personal agent memory/context (not for public repo)
+USER.md
+MEMORY.md
+memory/
