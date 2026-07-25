@@ -27,20 +27,42 @@ extracted from the user's mailbox by `scripts/otf_email_parser.py`.
   - `scripts/data/otf_report.md` — quick markdown snapshot
   - `scripts/data/otf_report.html` — styled HTML report with stat cards and tables
 
-## Step 1 — Refresh data if needed
+## Step 1 — Determine the date range the user needs
 
-If the user wants current/recent data and it may be stale, refresh first:
+Figure out the earliest date the query requires *before* deciding whether/how
+to refresh:
+
+- "this week" / "recent" / "lately" → small window, existing data is usually
+  enough.
+- A specific month or range (e.g. "May vs June", "last quarter") → compute the
+  number of days from **today** back to the start of the earliest referenced
+  period, then add a buffer (a week or so). Do not default to a small
+  `--since-days` value for these — it will silently truncate the requested
+  range and produce wrong comparisons.
+- "all time" / "since I started" → use a large value (e.g. 365+) or omit
+  filtering and just read the full existing CSV.
+
+Check `scripts/data/otf_classes.csv` first: if rows already cover the full
+requested range (check min/max `date`), you may not need to refresh at all —
+the CSV accumulates across runs (deduped by `id`) and is never overwritten.
+Only refresh when the CSV is missing coverage for the requested period or the
+user explicitly asks for fresh/updated data.
+
+## Step 2 — Refresh data if needed
 
 ```bash
-cd scripts && python3 otf_email_parser.py --graph --since-days 30
+cd scripts && python3 otf_email_parser.py --graph --since-days <N>
 ```
 
-This requires `scripts/.env` (or exported env vars) with `OTF_GRAPH_CLIENT_ID`
-set, and a browser-based device-code sign-in on first use (token cached at
-`scripts/data/graph_token.json`, gitignored). If the user hasn't set this up,
-fall back to whatever is already in `otf_classes.csv`.
+Set `<N>` to the value computed in Step 1 (e.g. for "May vs June" queried on
+July 24, May 1 is ~85 days back — use `--since-days 95` or more, not the
+default 60). This requires `scripts/.env` (or exported env vars) with
+`OTF_GRAPH_CLIENT_ID` set, and a browser-based device-code sign-in on first
+use (token cached at `scripts/data/graph_token.json`, gitignored). If the
+user hasn't set this up, fall back to whatever is already in `otf_classes.csv`
+and say so.
 
-## Step 2 — Load and analyze
+## Step 3 — Load and analyze
 
 Don't guess at trends from `otf_report.md` alone if deeper analysis is needed
 — read `otf_classes.csv` directly (e.g. via `python3` with the `csv` module or
@@ -49,6 +71,11 @@ analyses:
 
 - **Trend over time**: sort by `date`, plot/describe how distance, avg_hr, or
   splat_points change week over week or month over month.
+- **Month-over-month / period comparison**: parse the `date` column (ISO
+  format), bucket rows by calendar month (or the specific ranges the user
+  named), and compare totals/averages (classes count, avg distance, avg HR,
+  avg splat points, avg calories) between the periods. Call out the
+  direction and magnitude of change, not just raw numbers.
 - **Class-type comparison**: group by `class_type` (2G/3G/Strength/Power/
   Endurance/Tread 50/Unknown) and compare average distance, HR, efficiency
   (distance/avg_hr), splat points, calories.
@@ -67,7 +94,7 @@ analyses:
 Missing/blank numeric fields mean that metric wasn't found in the source email
 — exclude them from averages rather than treating as zero.
 
-## Step 3 — Present results
+## Step 4 — Present results
 
 - For quick answers, summarize directly in chat (numbers + 1-2 sentence takeaway).
 - If the user wants a visual/shareable artifact, point them to
