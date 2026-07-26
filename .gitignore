@@ -5,6 +5,8 @@ __pycache__/
 scripts/data/graph_token.json
 .env
 scripts/.env
+scripts/family_config.json
+scripts/data/google_maps_api_key.txt
 
 # Personal agent memory/context (not for public repo)
 USER.md

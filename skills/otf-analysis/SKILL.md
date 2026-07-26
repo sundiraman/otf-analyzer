@@ -13,93 +13,92 @@ metadata:
 
 # OTF Analysis
 
-This skill analyzes OrangeTheory Fitness (OTF) class data that has already been
-extracted from the user's mailbox by `scripts/otf_email_parser.py`.
+This skill analyzes OrangeTheory Fitness (OTF) class data pulled via the OTF
+API (`scripts/otf_api_pull.py`) or, as a fallback, parsed from email
+(`scripts/otf_email_parser.py`).
 
-## Data location (relative to workspace root)
+## Data Sources
 
-- Parser: `scripts/otf_email_parser.py`
-- Structured data: `scripts/data/otf_classes.csv` — one row per class with columns:
-  `id, date, subject, class_type, distance_miles, avg_hr, max_hr, splat_points,
-  calories, zone_gray_min, zone_blue_min, zone_green_min, zone_orange_min,
-  zone_red_min, source`
-- Pre-built summaries (regenerated each parser run):
-  - `scripts/data/otf_report.md` — quick markdown snapshot
-  - `scripts/data/otf_report.html` — styled HTML report with stat cards and tables
+### Primary: OTF API
+
+- Script: `scripts/otf_api_pull.py`
+- Output: `scripts/data/otf_workouts_api.csv`
+- Requires: `OTF_EMAIL` and `OTF_PASSWORD` in `scripts/.env`
+- Dependency: `otf-api` pip package (already installed)
+
+CSV columns:
+`date, time, class_name, class_type, coach, studio, calories, splat_points,
+avg_hr, max_hr, peak_hr, avg_hr_percent, peak_hr_percent,
+zone_gray_min, zone_blue_min, zone_green_min, zone_orange_min, zone_red_min,
+active_time_sec, step_count,
+tread_distance_mi, tread_avg_speed_mph, tread_max_speed_mph,
+tread_avg_incline, tread_max_incline, tread_elevation_ft, tread_moving_time_sec,
+rower_distance_m, rower_avg_power_w, rower_avg_cadence, rower_max_cadence,
+rower_moving_time_sec`
+
+### Fallback: Email Parser
+
+- Script: `scripts/otf_email_parser.py`
+- Output: `scripts/data/otf_classes.csv`
+- Use when API credentials aren't configured or API is unavailable.
+
+### Manual Class-Focus Tags
+
+- File: `scripts/data/otf_class_tags.csv`
+- Columns: `date,focus` (values: Strength, Power, Endurance, ESP, Other)
+- Tagging script: `scripts/otf_tag_class.py --date YYYY-MM-DD --focus <type>`
+- Merge with `otf_workouts_api.csv` on the `date` column to enrich analysis
+  with workout focus/template information.
 
 ## Step 1 — Determine the date range the user needs
 
-Figure out the earliest date the query requires *before* deciding whether/how
-to refresh:
-
-- "this week" / "recent" / "lately" → small window, existing data is usually
-  enough.
-- A specific month or range (e.g. "May vs June", "last quarter") → compute the
-  number of days from **today** back to the start of the earliest referenced
-  period, then add a buffer (a week or so). Do not default to a small
-  `--since-days` value for these — it will silently truncate the requested
-  range and produce wrong comparisons.
-- "all time" / "since I started" → use a large value (e.g. 365+) or omit
-  filtering and just read the full existing CSV.
-
-Check `scripts/data/otf_classes.csv` first: if rows already cover the full
-requested range (check min/max `date`), you may not need to refresh at all —
-the CSV accumulates across runs (deduped by `id`) and is never overwritten.
-Only refresh when the CSV is missing coverage for the requested period or the
-user explicitly asks for fresh/updated data.
+Figure out the earliest date the query requires *before* deciding whether to
+refresh. Check `scripts/data/otf_workouts_api.csv` first — if rows already
+cover the requested range, no refresh needed.
 
 ## Step 2 — Refresh data if needed
+
+```bash
+cd scripts && python3 otf_api_pull.py
+```
+
+This pulls the latest workout history from the OTF API. If credentials are
+missing or the API fails, fall back to whatever is already in the CSV and say
+so. For email-based fallback:
 
 ```bash
 cd scripts && python3 otf_email_parser.py --graph --since-days <N>
 ```
 
-Set `<N>` to the value computed in Step 1 (e.g. for "May vs June" queried on
-July 24, May 1 is ~85 days back — use `--since-days 95` or more, not the
-default 60). This requires `scripts/.env` (or exported env vars) with
-`OTF_GRAPH_CLIENT_ID` set, and a browser-based device-code sign-in on first
-use (token cached at `scripts/data/graph_token.json`, gitignored). If the
-user hasn't set this up, fall back to whatever is already in `otf_classes.csv`
-and say so.
-
 ## Step 3 — Load and analyze
 
-Don't guess at trends from `otf_report.md` alone if deeper analysis is needed
-— read `otf_classes.csv` directly (e.g. via `python3` with the `csv` module or
-`pandas` if available) and compute what the user actually asked for. Useful
-analyses:
+Read `scripts/data/otf_workouts_api.csv` directly (with pandas or csv module).
+Merge with `scripts/data/otf_class_tags.csv` on `date` if the tags file exists
+to add the `focus` column. Useful analyses:
 
-- **Trend over time**: sort by `date`, plot/describe how distance, avg_hr, or
-  splat_points change week over week or month over month.
-- **Month-over-month / period comparison**: parse the `date` column (ISO
-  format), bucket rows by calendar month (or the specific ranges the user
-  named), and compare totals/averages (classes count, avg distance, avg HR,
-  avg splat points, avg calories) between the periods. Call out the
-  direction and magnitude of change, not just raw numbers.
-- **Class-type comparison**: group by `class_type` (2G/3G/Strength/Power/
-  Endurance/Tread 50/Unknown) and compare average distance, HR, efficiency
-  (distance/avg_hr), splat points, calories.
-- **HR zone breakdown**: `zone_gray_min` through `zone_red_min` show minutes
-  spent in each heart-rate zone per class — useful for gauging workout
-  intensity distribution (more orange/red = higher intensity).
-- **Consistency/frequency**: count classes per week/month, gaps between
-  sessions, longest streaks.
-- **Personal records / anomalies**: max distance, max splat points, unusually
-  low/high HR classes (could indicate under-recovery or a particularly hard
-  class).
-- **Efficiency trend**: distance per average-HR-beat over time as a rough
-  fitness-improvement proxy (this is also computed per class-type in
-  `otf_report.md`/`otf_report.html`).
+- **Trend over time**: distance, avg_hr, splat_points week-over-week or
+  month-over-month.
+- **Period comparison**: bucket by month or user-specified ranges, compare
+  totals/averages.
+- **Class-type / focus comparison**: group by `class_type` or merged `focus`
+  tag and compare metrics.
+- **Treadmill breakdown**: tread_distance_mi, avg/max speed, incline trends,
+  elevation gain over time. Good for tracking running improvement.
+- **Rower breakdown**: rower_distance_m, avg_power_w, cadence trends. Good
+  for tracking rowing power gains.
+- **HR zone breakdown**: zone minutes per class for intensity distribution.
+- **Consistency/frequency**: classes per week/month, gaps, streaks.
+- **Personal records**: max tread distance, max rower distance, max splat
+  points, max speed, max power.
+- **Coach comparison**: group by `coach` for performance differences.
+- **Efficiency trend**: tread distance per avg HR or per active time as a
+  fitness proxy.
 
-Missing/blank numeric fields mean that metric wasn't found in the source email
-— exclude them from averages rather than treating as zero.
+Missing/blank numeric fields → exclude from averages, don't treat as zero.
 
 ## Step 4 — Present results
 
-- For quick answers, summarize directly in chat (numbers + 1-2 sentence takeaway).
-- If the user wants a visual/shareable artifact, point them to
-  `scripts/data/otf_report.html` (or regenerate it by re-running the parser,
-  which always rewrites both the markdown and HTML reports) rather than
-  re-inventing report generation from scratch.
-- Never fabricate workout data — if the CSV is empty or missing a metric,
-  say so plainly instead of estimating.
+- Quick answers: summarize in chat with numbers + takeaway.
+- For visuals, point to `scripts/data/otf_report.html` or generate plots
+  with matplotlib if available.
+- Never fabricate data.

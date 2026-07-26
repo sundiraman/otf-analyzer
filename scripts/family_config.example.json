@@ -1,0 +1,16 @@
+{
+  "family": {
+    "sunder": "you@example.com",
+    "wife": "spouse@example.com",
+    "son": "son@example.com",
+    "daughter": "daughter@example.com"
+  },
+  "son_keywords": [
+    "son's school name",
+    "son's activity/club"
+  ],
+  "daughter_keywords": [
+    "daughter's school name",
+    "daughter's activity/club"
+  ]
+}

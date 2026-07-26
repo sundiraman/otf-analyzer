@@ -21,7 +21,7 @@ except Exception:  # optional until --graph is used
 IMAP_HOST = "outlook.office365.com"
 IMAP_PORT = 993
 GRAPH_AUTHORITY = "https://login.microsoftonline.com/common"
-GRAPH_SCOPE = ["Mail.Read", "User.Read", "offline_access"]
+GRAPH_SCOPE = ["Mail.Read", "Mail.Send", "Calendars.ReadWrite", "User.Read", "offline_access"]
 GRAPH_API_ROOT = "https://graph.microsoft.com/v1.0"
 
 

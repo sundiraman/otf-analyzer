@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="OpenClaw" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Forbidden Peak - West Ridge</name>
+    <desc>Boston Basin trailhead to Forbidden Peak summit via West Ridge. Key waypoints for weather forecasting.</desc>
+  </metadata>
+  <trk>
+    <name>Forbidden Peak West Ridge</name>
+    <trkseg>
+      <!-- Boston Basin Trailhead (Cascade River Road) -->
+      <trkpt lat="48.4697" lon="-121.0467"><ele>975</ele><name>Trailhead</name></trkpt>
+      <!-- Trail junction entering Boston Basin -->
+      <trkpt lat="48.4720" lon="-121.0520"><ele>1220</ele></trkpt>
+      <!-- Boston Basin meadows -->
+      <trkpt lat="48.4755" lon="-121.0580"><ele>1525</ele></trkpt>
+      <!-- Boston Basin lower camp area -->
+      <trkpt lat="48.4780" lon="-121.0620"><ele>1740</ele></trkpt>
+      <!-- Boston Basin upper camp / bivy -->
+      <trkpt lat="48.4800" lon="-121.0680"><ele>1890</ele><name>Boston Basin Camp</name></trkpt>
+      <!-- Moraine / glacier approach -->
+      <trkpt lat="48.4815" lon="-121.0720"><ele>2040</ele></trkpt>
+      <!-- Boston Glacier lower -->
+      <trkpt lat="48.4825" lon="-121.0760"><ele>2195</ele></trkpt>
+      <!-- Sharkfin Col approach -->
+      <trkpt lat="48.4835" lon="-121.0790"><ele>2320</ele></trkpt>
+      <!-- Sharkfin Col -->
+      <trkpt lat="48.4840" lon="-121.0810"><ele>2440</ele><name>Sharkfin Col</name></trkpt>
+      <!-- West Ridge start -->
+      <trkpt lat="48.4845" lon="-121.0825"><ele>2530</ele><name>West Ridge Start</name></trkpt>
+      <!-- West Ridge midpoint -->
+      <trkpt lat="48.4850" lon="-121.0840"><ele>2600</ele></trkpt>
+      <!-- West Ridge upper -->
+      <trkpt lat="48.4853" lon="-121.0850"><ele>2650</ele></trkpt>
+      <!-- Summit -->
+      <trkpt lat="48.4855" lon="-121.0858"><ele>2687</ele><name>Summit</name></trkpt>
+    </trkseg>
+  </trk>
+</gpx>
