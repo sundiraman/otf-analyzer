@@ -12,3 +12,7 @@ scripts/data/google_maps_api_key.txt
 USER.md
 MEMORY.md
 memory/
+
+# Runtime logs/state containing real recipient emails, subjects, etc.
+scripts/data/reminder_send_log.json
+scripts/data/deadline_seen.json

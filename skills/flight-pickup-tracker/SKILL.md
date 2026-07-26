@@ -89,7 +89,7 @@ Gets real-time drive time with live traffic conditions.
 
 ```bash
 python3 scripts/drive_time.py \
-  --origin "123 Main St, Kirkland WA 98033" \
+  --origin "<your address>" \
   --dest "Seattle-Tacoma International Airport" \
   --api-key "$(cat scripts/data/google_maps_api_key.txt)" \
   --json
